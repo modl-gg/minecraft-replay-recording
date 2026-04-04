@@ -1,8 +1,8 @@
-package gg.modl.replay.recording.upload;
+package gg.modl.minecraft.replay.recording.upload;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
-import gg.modl.replay.recording.RecordingConfig;
+import gg.modl.minecraft.replay.recording.RecordingConfig;
 import lombok.Getter;
 
 import java.io.*;

@@ -1,4 +1,4 @@
-package gg.modl.replay.recording;
+package gg.modl.minecraft.replay.recording;
 
 import lombok.Getter;
 

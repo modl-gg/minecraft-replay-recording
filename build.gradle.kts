@@ -3,7 +3,7 @@ plugins {
     `maven-publish`
 }
 
-group = "gg.modl.replay"
+group = "gg.modl.minecraft.replay"
 version = "1.1.0"
 
 java {
@@ -20,7 +20,7 @@ repositories {
 }
 
 dependencies {
-    api("gg.modl.replay:replay-format:1.1.0")
+    api("gg.modl.minecraft.replay:replay-format:1.1.0")
     implementation("com.google.code.gson:gson:2.11.0")
 
     // Platform-agnostic PacketEvents API — works with Spigot, Fabric, and NeoForge backends

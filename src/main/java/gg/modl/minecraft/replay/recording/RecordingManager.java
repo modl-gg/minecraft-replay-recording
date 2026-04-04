@@ -1,15 +1,15 @@
-package gg.modl.replay.recording;
+package gg.modl.minecraft.replay.recording;
 
-import gg.modl.replay.ReplayWriter;
-import gg.modl.replay.api.*;
-import gg.modl.replay.format.ReplayEvent;
-import gg.modl.replay.format.ReplayHeader;
-import gg.modl.replay.format.events.BlockChangeEvent;
-import gg.modl.replay.format.events.PlayerBlockBreakEvent;
-import gg.modl.replay.format.events.PlayerBlockPlaceEvent;
-import gg.modl.replay.format.events.PlayerSpawnEvent;
-import gg.modl.replay.util.BlockSnapshot;
-import gg.modl.replay.util.FormatConstants;
+import gg.modl.minecraft.replay.ReplayWriter;
+import gg.modl.minecraft.replay.api.*;
+import gg.modl.minecraft.replay.format.ReplayEvent;
+import gg.modl.minecraft.replay.format.ReplayHeader;
+import gg.modl.minecraft.replay.format.events.BlockChangeEvent;
+import gg.modl.minecraft.replay.format.events.PlayerBlockBreakEvent;
+import gg.modl.minecraft.replay.format.events.PlayerBlockPlaceEvent;
+import gg.modl.minecraft.replay.format.events.PlayerSpawnEvent;
+import gg.modl.minecraft.replay.util.BlockSnapshot;
+import gg.modl.minecraft.replay.util.FormatConstants;
 import lombok.Getter;
 
 import java.io.*;

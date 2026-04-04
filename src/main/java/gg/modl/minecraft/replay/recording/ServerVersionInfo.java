@@ -1,4 +1,4 @@
-package gg.modl.replay.recording;
+package gg.modl.minecraft.replay.recording;
 
 import com.github.retrooper.packetevents.protocol.player.ClientVersion;
 

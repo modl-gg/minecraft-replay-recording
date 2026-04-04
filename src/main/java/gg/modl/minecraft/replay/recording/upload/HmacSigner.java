@@ -1,4 +1,4 @@
-package gg.modl.replay.recording.upload;
+package gg.modl.minecraft.replay.recording.upload;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;

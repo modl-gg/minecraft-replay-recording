@@ -1,4 +1,4 @@
-package gg.modl.replay.recording;
+package gg.modl.minecraft.replay.recording;
 
 import com.github.retrooper.packetevents.PacketEvents;
 import com.github.retrooper.packetevents.event.PacketListenerAbstract;
@@ -27,8 +27,8 @@ import com.github.retrooper.packetevents.protocol.item.enchantment.Enchantment;
 import com.github.retrooper.packetevents.wrapper.play.server.*;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import gg.modl.replay.format.events.*;
-import gg.modl.replay.format.ReplayEvent;
+import gg.modl.minecraft.replay.format.events.*;
+import gg.modl.minecraft.replay.format.ReplayEvent;
 
 
 import java.net.URI;

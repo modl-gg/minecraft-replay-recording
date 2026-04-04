@@ -1,11 +1,11 @@
-package gg.modl.replay.recording;
+package gg.modl.minecraft.replay.recording;
 
 import com.github.retrooper.packetevents.protocol.player.ClientVersion;
 import com.github.retrooper.packetevents.protocol.world.chunk.BaseChunk;
 import com.github.retrooper.packetevents.protocol.world.chunk.Column;
 import com.github.retrooper.packetevents.protocol.world.chunk.impl.v_1_18.Chunk_v1_18;
 import com.github.retrooper.packetevents.protocol.world.states.WrappedBlockState;
-import gg.modl.replay.util.BlockSnapshot;
+import gg.modl.minecraft.replay.util.BlockSnapshot;
 
 import java.util.ArrayList;
 import java.util.Collections;
