@@ -189,7 +189,8 @@ public class RecordingManager {
 
     /**
      * Async stop with stored center + auto-generated spawns.
-     * Copies chunk keys and world name on caller thread (microseconds), does all heavy work on writer thread.
+     * Copies chunk refs and retains them on the caller thread so snapshotting survives
+     * disconnect/world-change cleanup, then does the expensive write on the writer thread.
      */
     public CompletableFuture<ReplayMetadata> stopRecordingAsync(UUID targetUuid) {
         ActiveRecording recording = recordings.remove(targetUuid);
@@ -200,6 +201,7 @@ public class RecordingManager {
         List<ReplayEvent> spawns = generatePlayerSpawns(recording.getTargetUuid());
         List<ReplayEvent> bufferedEvents = recording.getBuffer().drainPreRoll();
         ChunkTracker.WorldChunkRef[] chunkKeys = copyChunkKeys(recording.getTargetUuid());
+        retainChunkKeys(chunkKeys);
 
         // Heavy work on writer thread
         CompletableFuture<ReplayMetadata> future = new CompletableFuture<>();
@@ -214,6 +216,8 @@ public class RecordingManager {
             } catch (Exception e) {
                 logger.log(Level.SEVERE, "Error stopping recording for " + recording.getTargetName(), e);
                 future.complete(null);
+            } finally {
+                releaseChunkKeys(chunkKeys);
             }
         });
         return future;
@@ -221,7 +225,8 @@ public class RecordingManager {
 
     /**
      * Async stop with explicit position + player spawns.
-     * Copies chunk keys and world name on caller thread (microseconds), does all heavy work on writer thread.
+     * Copies chunk refs and retains them on the caller thread so snapshotting survives
+     * disconnect/world-change cleanup, then does the expensive write on the writer thread.
      */
     public CompletableFuture<ReplayMetadata> stopRecordingAsync(UUID targetUuid, int centerX, int centerY, int centerZ,
                                                                  List<ReplayEvent> initialEvents) {
@@ -233,6 +238,7 @@ public class RecordingManager {
         recording.updateBounds(centerX, centerY, centerZ);
         List<ReplayEvent> bufferedEvents = recording.getBuffer().drainPreRoll();
         ChunkTracker.WorldChunkRef[] chunkKeys = copyChunkKeys(recording.getTargetUuid());
+        retainChunkKeys(chunkKeys);
 
         // Heavy work on writer thread
         CompletableFuture<ReplayMetadata> future = new CompletableFuture<>();
@@ -246,6 +252,8 @@ public class RecordingManager {
             } catch (Exception e) {
                 logger.log(Level.SEVERE, "Error stopping recording for " + recording.getTargetName(), e);
                 future.complete(null);
+            } finally {
+                releaseChunkKeys(chunkKeys);
             }
         });
         return future;
@@ -277,6 +285,16 @@ public class RecordingManager {
     private ChunkTracker.WorldChunkRef[] copyChunkKeys(UUID viewerUuid) {
         if (chunkTracker == null) return new ChunkTracker.WorldChunkRef[0];
         return chunkTracker.copyPlayerChunkKeys(viewerUuid);
+    }
+
+    private void retainChunkKeys(ChunkTracker.WorldChunkRef[] chunkKeys) {
+        if (chunkTracker == null || chunkKeys.length == 0) return;
+        chunkTracker.retainChunkKeys(chunkKeys);
+    }
+
+    private void releaseChunkKeys(ChunkTracker.WorldChunkRef[] chunkKeys) {
+        if (chunkTracker == null || chunkKeys.length == 0) return;
+        chunkTracker.releaseChunkKeys(chunkKeys);
     }
 
     private String captureWorldName(UUID viewerUuid) {

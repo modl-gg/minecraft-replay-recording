@@ -161,6 +161,32 @@ public class ChunkTracker {
     }
 
     /**
+     * Retain a copied set of chunk refs so async snapshotting can outlive player disconnects
+     * or world changes that would otherwise drop the shared chunk cache entries.
+     */
+    public void retainChunkKeys(WorldChunkRef[] chunkKeys) {
+        for (WorldChunkRef ref : chunkKeys) {
+            ConcurrentHashMap<Long, RefCountedChunk> worldMap = globalChunks.get(ref.worldName);
+            if (worldMap == null) continue;
+            worldMap.computeIfPresent(ref.packedXZ, (k, rc) -> {
+                rc.refCount.incrementAndGet();
+                return rc;
+            });
+        }
+    }
+
+    /**
+     * Release refs previously retained via {@link #retainChunkKeys(WorldChunkRef[])}.
+     */
+    public void releaseChunkKeys(WorldChunkRef[] chunkKeys) {
+        for (WorldChunkRef ref : chunkKeys) {
+            ConcurrentHashMap<Long, RefCountedChunk> worldMap = globalChunks.get(ref.worldName);
+            if (worldMap == null) continue;
+            worldMap.computeIfPresent(ref.packedXZ, (k, rc) -> rc.refCount.decrementAndGet() <= 0 ? null : rc);
+        }
+    }
+
+    /**
      * Takes a block snapshot using a pre-copied set of chunk keys.
      * Can be called from any thread (designed for the writer thread).
      * Iterates the provided keys against the global cache with bounds + occlusion culling.
