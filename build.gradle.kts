@@ -3,8 +3,10 @@ plugins {
     `maven-publish`
 }
 
+val packetEventsVersion = "2.12.3"
+
 group = "gg.modl.minecraft.replay"
-version = "1.1.0"
+version = "1.1.2"
 
 java {
     toolchain {
@@ -15,6 +17,7 @@ java {
 repositories {
     mavenCentral()
     maven("https://nexus.modl.gg/repository/maven-releases/")
+    maven("https://nexus.modl.gg/repository/maven-snapshots/")
     maven("https://repo.codemc.io/repository/maven-releases/")
     maven("https://repo.codemc.io/repository/maven-snapshots/")
 }
@@ -23,12 +26,19 @@ dependencies {
     api("gg.modl.minecraft.replay:replay-format:1.1.0")
     implementation("com.google.code.gson:gson:2.11.0")
 
-    // Platform-agnostic PacketEvents API — works with Spigot, Fabric, and NeoForge backends
-    compileOnly("com.github.retrooper:packetevents-api:2.11.2")
+    // Platform-agnostic PacketEvents API from the Modl fork to match server/runtime behavior.
+    compileOnly("gg.modl.minecraft.packetevents:packetevents-api:$packetEventsVersion")
     compileOnly("net.kyori:adventure-api:4.26.1")
 
     compileOnly("org.projectlombok:lombok:1.18.24")
     annotationProcessor("org.projectlombok:lombok:1.18.24")
+
+    testImplementation("gg.modl.minecraft.packetevents:packetevents-api:$packetEventsVersion")
+    testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
+}
+
+tasks.test {
+    useJUnitPlatform()
 }
 
 publishing {

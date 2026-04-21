@@ -499,21 +499,26 @@ public class PacketRecorder extends PacketListenerAbstract {
     private void handleSpawnEntity(PacketSendEvent event, UUID viewerUuid) {
         WrapperPlayServerSpawnEntity wrapper = new WrapperPlayServerSpawnEntity(event);
 
-        int entityId = wrapper.getEntityId();
-        UUID entityUuid = wrapper.getUUID().orElse(null);
-        EntityType entityType = wrapper.getEntityType();
-        double x = wrapper.getPosition().getX();
-        double y = wrapper.getPosition().getY();
-        double z = wrapper.getPosition().getZ();
-        float yaw = wrapper.getYaw();
-        float pitch = wrapper.getPitch();
+        handleSpawnEntity(
+                viewerUuid,
+                wrapper.getEntityId(),
+                wrapper.getUUID().orElse(null),
+                wrapper.getEntityType(),
+                wrapper.getPosition().getX(),
+                wrapper.getPosition().getY(),
+                wrapper.getPosition().getZ(),
+                wrapper.getYaw(),
+                wrapper.getPitch(),
+                wrapper.getData()
+        );
+    }
 
-        // EntityTypes.PLAYER may not match in some PacketEvents versions / MC versions.
-        // Fall back to PLAYER_INFO_UPDATE name cache — if the UUID was announced there, it's a player.
-        boolean isPlayer = entityType == EntityTypes.PLAYER
-                || entityTracker.isKnownPlayer(entityUuid);
+    private void handleSpawnEntity(UUID viewerUuid, int entityId, UUID entityUuid, EntityType entityType,
+                                   double x, double y, double z, float yaw, float pitch, int data) {
+        SpawnEntityClassifier.SpawnKind spawnKind =
+                SpawnEntityClassifier.classify(entityTracker.isKnownPlayer(entityUuid), entityType);
 
-        if (isPlayer) {
+        if (spawnKind == SpawnEntityClassifier.SpawnKind.PLAYER) {
             // Use global name cache — PLAYER_INFO_UPDATE arrives before SPAWN_ENTITY
             String name = entityTracker.getPlayerName(entityUuid);
 
@@ -536,7 +541,7 @@ public class PacketRecorder extends PacketListenerAbstract {
                 );
                 enqueue(viewerUuid, spawnEvent);
             }
-        } else {
+        } else if (spawnKind == SpawnEntityClassifier.SpawnKind.NON_PLAYER) {
             int typeId = entityType.getId(ClientVersion.getLatest());
             entityTracker.trackEntity(viewerUuid, entityId, entityUuid, false, typeId, x, y, z, yaw, pitch);
 
@@ -547,7 +552,7 @@ public class PacketRecorder extends PacketListenerAbstract {
                 String typeName = entityType.getName().toString();
                 if (typeName.startsWith("minecraft:")) typeName = typeName.substring(10);
                 if (entityType == EntityTypes.FALLING_BLOCK) {
-                    int blockStateId = wrapper.getData();
+                    int blockStateId = data;
                     typeName = typeName + ":" + blockStateId;
                 }
                 byte[] metadata = typeName.getBytes(java.nio.charset.StandardCharsets.UTF_8);
@@ -557,6 +562,9 @@ public class PacketRecorder extends PacketListenerAbstract {
                 );
                 enqueue(viewerUuid, spawnEvent);
             }
+        } else {
+            logger.warning("Skipping SPAWN_ENTITY for unresolved entity type, entityId=" + entityId
+                    + ", entityUuid=" + entityUuid);
         }
     }
 
