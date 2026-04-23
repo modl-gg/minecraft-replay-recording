@@ -542,6 +542,10 @@ public class PacketRecorder extends PacketListenerAbstract {
                 enqueue(viewerUuid, spawnEvent);
             }
         } else if (spawnKind == SpawnEntityClassifier.SpawnKind.NON_PLAYER) {
+            if (entityType == null) {
+                logger.warning("Unresolved entity type for NON_PLAYER! entityId=" + entityId + ", entityUuid=" + entityUuid);
+                return; 
+            }
             int typeId = entityType.getId(ClientVersion.getLatest());
             entityTracker.trackEntity(viewerUuid, entityId, entityUuid, false, typeId, x, y, z, yaw, pitch);
 
