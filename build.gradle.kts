@@ -3,10 +3,10 @@ plugins {
     `maven-publish`
 }
 
-val packetEventsVersion = "2.12.3"
+val packetEventsVersion = "2.12.9"
 
 group = "gg.modl.minecraft.replay"
-version = "1.1.2"
+version = "1.1.3"
 
 java {
     toolchain {
