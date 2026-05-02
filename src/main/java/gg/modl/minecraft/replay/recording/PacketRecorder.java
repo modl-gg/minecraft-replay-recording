@@ -15,6 +15,7 @@ import com.github.retrooper.packetevents.protocol.player.Equipment;
 import com.github.retrooper.packetevents.protocol.player.EquipmentSlot;
 import com.github.retrooper.packetevents.protocol.player.InteractionHand;
 import com.github.retrooper.packetevents.protocol.player.TextureProperty;
+import com.github.retrooper.packetevents.protocol.player.User;
 import com.github.retrooper.packetevents.protocol.player.UserProfile;
 import com.github.retrooper.packetevents.protocol.world.chunk.Column;
 import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientAnimation;
@@ -34,6 +35,7 @@ import gg.modl.minecraft.replay.format.ReplayEvent;
 import java.net.URI;
 import java.io.*;
 import java.net.HttpURLConnection;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -161,20 +163,20 @@ public class PacketRecorder extends PacketListenerAbstract {
 
     @Override
     public void onPacketSend(PacketSendEvent event) {
-        if (event.getUser() == null) return;
-
-        UUID viewerUuid = event.getUser().getUUID();
+        UUID viewerUuid = resolvePacketPlayerUuid(event.getUser(), event.getPlayer());
         if (viewerUuid == null) return;
 
         Object type = event.getPacketType();
 
         try {
-            if (handleAlwaysTracked(event, type, viewerUuid)) return;
+            ReadOnlyPacketEventScope.run(event, () -> {
+                if (handleAlwaysTracked(event, type, viewerUuid)) return;
 
-            // Everything below only runs when actively recording
-            if (!recordingManager.isRecording(viewerUuid)) return;
+                // Everything below only runs when actively recording
+                if (!recordingManager.isRecording(viewerUuid)) return;
 
-            handleRecordingPacket(event, type, viewerUuid);
+                handleRecordingPacket(event, type, viewerUuid);
+            });
         } catch (Exception e) {
             logger.warning("Error processing packet " + type + ": " + e.getMessage());
         }
@@ -187,77 +189,78 @@ public class PacketRecorder extends PacketListenerAbstract {
      */
     @Override
     public void onPacketReceive(PacketReceiveEvent event) {
-        if (event.getUser() == null) return;
-        UUID playerUuid = event.getUser().getUUID();
+        UUID playerUuid = resolvePacketPlayerUuid(event.getUser(), event.getPlayer());
         if (playerUuid == null) return;
 
         Object type = event.getPacketType();
 
         try {
-            if (type == PacketType.Play.Client.HELD_ITEM_CHANGE) {
-                WrapperPlayClientHeldItemChange wrapper = new WrapperPlayClientHeldItemChange(event);
-                int newSlot = wrapper.getSlot();
-                int oldSlot = heldSlots.getOrDefault(playerUuid, 0);
-                heldSlots.put(playerUuid, newSlot);
-                if (oldSlot != newSlot && recordingManager.isRecording(playerUuid)) {
-                    emitSelfEquipment(playerUuid);
+            ReadOnlyPacketEventScope.run(event, () -> {
+                if (type == PacketType.Play.Client.HELD_ITEM_CHANGE) {
+                    WrapperPlayClientHeldItemChange wrapper = new WrapperPlayClientHeldItemChange(event);
+                    int newSlot = wrapper.getSlot();
+                    int oldSlot = heldSlots.getOrDefault(playerUuid, 0);
+                    heldSlots.put(playerUuid, newSlot);
+                    if (oldSlot != newSlot && recordingManager.isRecording(playerUuid)) {
+                        emitSelfEquipment(playerUuid);
+                    }
+                    return;
                 }
-                return;
-            }
 
-            // Extract position/rotation from C2S packets
-            double px = Double.NaN, py = Double.NaN, pz = Double.NaN;
-            float pYaw = Float.NaN, pPitch = Float.NaN;
+                // Extract position/rotation from C2S packets
+                double px = Double.NaN, py = Double.NaN, pz = Double.NaN;
+                float pYaw = Float.NaN, pPitch = Float.NaN;
 
-            if (type == PacketType.Play.Client.PLAYER_POSITION) {
-                WrapperPlayClientPlayerPosition wrapper = new WrapperPlayClientPlayerPosition(event);
-                px = wrapper.getLocation().getX(); py = wrapper.getLocation().getY(); pz = wrapper.getLocation().getZ();
-            } else if (type == PacketType.Play.Client.PLAYER_POSITION_AND_ROTATION) {
-                WrapperPlayClientPlayerPositionAndRotation wrapper = new WrapperPlayClientPlayerPositionAndRotation(event);
-                px = wrapper.getLocation().getX(); py = wrapper.getLocation().getY(); pz = wrapper.getLocation().getZ();
-                pYaw = wrapper.getLocation().getYaw(); pPitch = wrapper.getLocation().getPitch();
-            } else if (type == PacketType.Play.Client.PLAYER_ROTATION) {
-                WrapperPlayClientPlayerRotation wrapper = new WrapperPlayClientPlayerRotation(event);
-                pYaw = wrapper.getLocation().getYaw(); pPitch = wrapper.getLocation().getPitch();
-            }
+                if (type == PacketType.Play.Client.PLAYER_POSITION) {
+                    WrapperPlayClientPlayerPosition wrapper = new WrapperPlayClientPlayerPosition(event);
+                    px = wrapper.getLocation().getX(); py = wrapper.getLocation().getY(); pz = wrapper.getLocation().getZ();
+                } else if (type == PacketType.Play.Client.PLAYER_POSITION_AND_ROTATION) {
+                    WrapperPlayClientPlayerPositionAndRotation wrapper = new WrapperPlayClientPlayerPositionAndRotation(event);
+                    px = wrapper.getLocation().getX(); py = wrapper.getLocation().getY(); pz = wrapper.getLocation().getZ();
+                    pYaw = wrapper.getLocation().getYaw(); pPitch = wrapper.getLocation().getPitch();
+                } else if (type == PacketType.Play.Client.PLAYER_ROTATION) {
+                    WrapperPlayClientPlayerRotation wrapper = new WrapperPlayClientPlayerRotation(event);
+                    pYaw = wrapper.getLocation().getYaw(); pPitch = wrapper.getLocation().getPitch();
+                }
 
-            boolean hasPosition = !Double.isNaN(px);
-            boolean hasRotation = !Float.isNaN(pYaw);
+                boolean hasPosition = !Double.isNaN(px);
+                boolean hasRotation = !Float.isNaN(pYaw);
 
-            // Handle target player's own recording
-            if (recordingManager.isRecording(playerUuid)) {
+                // Handle target player's own recording
+                if (recordingManager.isRecording(playerUuid)) {
+                    if (hasPosition || hasRotation) {
+                        handlePlayerPosition(playerUuid, playerUuid, px, py, pz, pYaw, pPitch);
+                    } else if (type == PacketType.Play.Client.ANIMATION) {
+                        WrapperPlayClientAnimation wrapper = new WrapperPlayClientAnimation(event);
+                        long now = System.currentTimeMillis();
+                        int deltaMs = (int) (now - getRecordingStartTime(playerUuid));
+                        PlayerAnimEvent.AnimationType animType = (wrapper.getHand() == InteractionHand.OFF_HAND)
+                                ? PlayerAnimEvent.AnimationType.SWING_OFF_ARM
+                                : PlayerAnimEvent.AnimationType.SWING_MAIN_ARM;
+                        enqueue(playerUuid, new PlayerAnimEvent(deltaMs, playerUuid, animType));
+                    }
+                }
+
+                // Correct EntityTracker positions for OTHER recordings tracking this player.
+                // C2S gives exact absolute coordinates; S2C relative moves handle event emission.
                 if (hasPosition || hasRotation) {
-                    handlePlayerPosition(playerUuid, playerUuid, px, py, pz, pYaw, pPitch);
-                } else if (type == PacketType.Play.Client.ANIMATION) {
-                    WrapperPlayClientAnimation wrapper = new WrapperPlayClientAnimation(event);
-                    long now = System.currentTimeMillis();
-                    int deltaMs = (int) (now - getRecordingStartTime(playerUuid));
-                    PlayerAnimEvent.AnimationType animType = (wrapper.getHand() == InteractionHand.OFF_HAND)
-                            ? PlayerAnimEvent.AnimationType.SWING_OFF_ARM
-                            : PlayerAnimEvent.AnimationType.SWING_MAIN_ARM;
-                    enqueue(playerUuid, new PlayerAnimEvent(deltaMs, playerUuid, animType));
-                }
-            }
-
-            // Correct EntityTracker positions for OTHER recordings tracking this player.
-            // C2S gives exact absolute coordinates; S2C relative moves handle event emission.
-            if (hasPosition || hasRotation) {
-                List<UUID> viewers = entityTracker.findViewersTracking(playerUuid);
-                for (UUID viewerUuid : viewers) {
-                    if (viewerUuid.equals(playerUuid)) continue; // already handled above
-                    EntityTracker.TrackedEntity entity = entityTracker.getByUuid(viewerUuid, playerUuid);
-                    if (entity == null) continue;
-                    if (hasPosition) {
-                        entity.setX(px);
-                        entity.setY(py);
-                        entity.setZ(pz);
-                    }
-                    if (hasRotation) {
-                        entity.setYaw(pYaw);
-                        entity.setPitch(pPitch);
+                    List<UUID> viewers = entityTracker.findViewersTracking(playerUuid);
+                    for (UUID viewerUuid : viewers) {
+                        if (viewerUuid.equals(playerUuid)) continue; // already handled above
+                        EntityTracker.TrackedEntity entity = entityTracker.getByUuid(viewerUuid, playerUuid);
+                        if (entity == null) continue;
+                        if (hasPosition) {
+                            entity.setX(px);
+                            entity.setY(py);
+                            entity.setZ(pz);
+                        }
+                        if (hasRotation) {
+                            entity.setYaw(pYaw);
+                            entity.setPitch(pPitch);
+                        }
                     }
                 }
-            }
+            });
         } catch (Exception e) {
             logger.warning("Error processing client packet " + type + ": " + e.getMessage());
         }
@@ -819,15 +822,25 @@ public class PacketRecorder extends PacketListenerAbstract {
     }
 
     private void handleEntityMetadata(PacketSendEvent event, UUID viewerUuid) {
-        WrapperPlayServerEntityMetadata wrapper = new WrapperPlayServerEntityMetadata(event);
-        int entityId = wrapper.getEntityId();
+        WrapperPlayServerEntityMetadata wrapper;
+        int entityId;
+        List<EntityData<?>> metadata;
+        try {
+            wrapper = new WrapperPlayServerEntityMetadata(event);
+            entityId = wrapper.getEntityId();
+            metadata = wrapper.getEntityMetadata();
+        } catch (RuntimeException e) {
+            if (PacketDecodeFailures.isUnsupportedItemComponentDecodeFailure(e)
+                    || PacketDecodeFailures.isUnsupportedEntityMetadataDecodeFailure(e)) return;
+            throw e;
+        }
 
         EntityTracker.TrackedEntity entity = entityTracker.getByEntityId(viewerUuid, entityId);
         if (entity == null) return;
 
         if (entity.isPlayer()) {
             // Check for sneak state changes via entity metadata index 0 (shared flags)
-            for (EntityData data : wrapper.getEntityMetadata()) {
+            for (EntityData<?> data : metadata) {
                 if (data.getIndex() == 0 && data.getValue() instanceof Byte) {
                     Byte flags = (Byte) data.getValue();
                     boolean sneaking = (flags & 0x02) != 0;
@@ -849,18 +862,23 @@ public class PacketRecorder extends PacketListenerAbstract {
             // Re-emit a spawn event with "item:<itemname>" so the viewer can texture it.
             int itemTypeId = EntityTypes.ITEM.getId(ClientVersion.getLatest());
             if (entity.getTypeId() == itemTypeId) {
-                for (EntityData data : wrapper.getEntityMetadata()) {
-                    if (data.getIndex() == 8 && data.getValue() instanceof com.github.retrooper.packetevents.protocol.item.ItemStack) {
-                        com.github.retrooper.packetevents.protocol.item.ItemStack itemStack = (com.github.retrooper.packetevents.protocol.item.ItemStack) data.getValue();
+                for (EntityData<?> data : metadata) {
+                    if (data.getIndex() == 8 && data.getValue() instanceof ItemStack) {
+                        ItemStack itemStack = (ItemStack) data.getValue();
                         String itemName = getItemName(itemStack);
                         if (!itemName.equals("air")) {
                             String typeName = "item:" + itemName;
-                            byte[] metadata = typeName.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                            byte[] spawnMetadata = typeName.getBytes(StandardCharsets.UTF_8);
                             long now = System.currentTimeMillis();
                             int deltaMs = (int) (now - getRecordingStartTime(viewerUuid));
                             EntitySpawnEvent spawnEvent = new EntitySpawnEvent(
-                                    deltaMs, entityId, (short) itemTypeId,
-                                    (float) entity.getX(), (float) entity.getY(), (float) entity.getZ(), metadata
+                                    deltaMs,
+                                    entityId,
+                                    (short) itemTypeId,
+                                    (float) entity.getX(),
+                                    (float) entity.getY(),
+                                    (float) entity.getZ(),
+                                    spawnMetadata
                             );
                             enqueue(viewerUuid, spawnEvent);
                         }
@@ -873,30 +891,44 @@ public class PacketRecorder extends PacketListenerAbstract {
     // ==================== Equipment Handler ====================
 
     private void handleEntityEquipment(PacketSendEvent event, UUID viewerUuid) {
-        WrapperPlayServerEntityEquipment wrapper = new WrapperPlayServerEntityEquipment(event);
-        int entityId = wrapper.getEntityId();
+        WrapperPlayServerEntityEquipment wrapper;
+        int entityId;
+        List<Equipment> equipmentList;
+        try {
+            wrapper = new WrapperPlayServerEntityEquipment(event);
+            entityId = wrapper.getEntityId();
+            equipmentList = wrapper.getEquipment();
+        } catch (RuntimeException e) {
+            if (PacketDecodeFailures.isUnsupportedItemComponentDecodeFailure(e)) return;
+            throw e;
+        }
 
         EntityTracker.TrackedEntity entity = entityTracker.getByEntityId(viewerUuid, entityId);
         if (entity == null || !entity.isPlayer()) return;
 
-        List<Equipment> equipmentList = wrapper.getEquipment();
         if (equipmentList == null || equipmentList.isEmpty()) return;
 
-        // Update cached equipment for this entity
+        Map<Integer, String> equipmentUpdates = new HashMap<>();
+        Map<Integer, List<PlayerEquipmentFullEvent.EnchantEntry>> enchantCache = new HashMap<>();
+
+        try {
+            for (Equipment equipment : equipmentList) {
+                int slotId = mapEquipmentSlot(equipment.getSlot());
+                String itemName = getItemName(equipment.getItem());
+                equipmentUpdates.put(slotId, itemName);
+                List<PlayerInventoryEvent.EnchantEntry> invEnchants = getEnchantments(equipment.getItem());
+                enchantCache.put(slotId, toEquipEnchants(invEnchants));
+            }
+        } catch (RuntimeException e) {
+            if (PacketDecodeFailures.isUnsupportedItemComponentDecodeFailure(e)) return;
+            throw e;
+        }
+
+        // Update cached equipment for this entity only after item decoding succeeds.
         Map<Integer, String> cache = otherPlayerEquipment
                 .computeIfAbsent(viewerUuid, k -> new ConcurrentHashMap<>())
                 .computeIfAbsent(entity.getUuid(), k -> new ConcurrentHashMap<>());
-
-        // Build enchantment data alongside equipment
-        Map<Integer, List<PlayerEquipmentFullEvent.EnchantEntry>> enchantCache = new HashMap<>();
-
-        for (Equipment equipment : equipmentList) {
-            int slotId = mapEquipmentSlot(equipment.getSlot());
-            String itemName = getItemName(equipment.getItem());
-            cache.put(slotId, itemName);
-            List<PlayerInventoryEvent.EnchantEntry> invEnchants = getEnchantments(equipment.getItem());
-            enchantCache.put(slotId, toEquipEnchants(invEnchants));
-        }
+        cache.putAll(equipmentUpdates);
 
         // Emit full equipment snapshot from cache
         long now = System.currentTimeMillis();
@@ -917,8 +949,17 @@ public class PacketRecorder extends PacketListenerAbstract {
      * Catches right-click armor equipping which doesn't send SET_SLOT to self.
      */
     private void handleCrossPlayerEquipment(PacketSendEvent event, UUID viewerUuid) {
-        WrapperPlayServerEntityEquipment wrapper = new WrapperPlayServerEntityEquipment(event);
-        int entityId = wrapper.getEntityId();
+        WrapperPlayServerEntityEquipment wrapper;
+        int entityId;
+        List<Equipment> equipmentList;
+        try {
+            wrapper = new WrapperPlayServerEntityEquipment(event);
+            entityId = wrapper.getEntityId();
+            equipmentList = wrapper.getEquipment();
+        } catch (RuntimeException e) {
+            if (PacketDecodeFailures.isUnsupportedItemComponentDecodeFailure(e)) return;
+            throw e;
+        }
 
         EntityTracker.TrackedEntity entity = entityTracker.getByEntityId(viewerUuid, entityId);
         if (entity == null || !entity.isPlayer()) return;
@@ -928,34 +969,41 @@ public class PacketRecorder extends PacketListenerAbstract {
         if (playerUuid.equals(viewerUuid)) return; // handled by normal equipment path
         if (!recordingManager.isRecording(playerUuid)) return;
 
-        List<Equipment> equipmentList = wrapper.getEquipment();
         if (equipmentList == null || equipmentList.isEmpty()) return;
 
         // Update the TARGET's inventory cache with the equipment data
-        Map<Integer, String> inv = inventoryCache.computeIfAbsent(playerUuid, k -> new ConcurrentHashMap<>());
+        Map<Integer, String> inventoryUpdates = new HashMap<>();
         for (Equipment eq : equipmentList) {
-            String itemName = getItemName(eq.getItem());
-            int protocolSlot;
-            EquipmentSlot eqSlot = eq.getSlot();
-            if (eqSlot == EquipmentSlot.MAIN_HAND) {
-                protocolSlot = 36 + heldSlots.getOrDefault(playerUuid, 0);
-            } else if (eqSlot == EquipmentSlot.OFF_HAND) {
-                protocolSlot = 45;
-            } else if (eqSlot == EquipmentSlot.HELMET) {
-                protocolSlot = 5;
-            } else if (eqSlot == EquipmentSlot.CHEST_PLATE) {
-                protocolSlot = 6;
-            } else if (eqSlot == EquipmentSlot.LEGGINGS) {
-                protocolSlot = 7;
-            } else if (eqSlot == EquipmentSlot.BOOTS) {
-                protocolSlot = 8;
-            } else {
-                protocolSlot = -1;
-            }
-            if (protocolSlot >= 0) {
-                inv.put(protocolSlot, itemName);
+            try {
+                String itemName = getItemName(eq.getItem());
+                int protocolSlot;
+                EquipmentSlot eqSlot = eq.getSlot();
+                if (eqSlot == EquipmentSlot.MAIN_HAND) {
+                    protocolSlot = 36 + heldSlots.getOrDefault(playerUuid, 0);
+                } else if (eqSlot == EquipmentSlot.OFF_HAND) {
+                    protocolSlot = 45;
+                } else if (eqSlot == EquipmentSlot.HELMET) {
+                    protocolSlot = 5;
+                } else if (eqSlot == EquipmentSlot.CHEST_PLATE) {
+                    protocolSlot = 6;
+                } else if (eqSlot == EquipmentSlot.LEGGINGS) {
+                    protocolSlot = 7;
+                } else if (eqSlot == EquipmentSlot.BOOTS) {
+                    protocolSlot = 8;
+                } else {
+                    protocolSlot = -1;
+                }
+                if (protocolSlot >= 0) {
+                    inventoryUpdates.put(protocolSlot, itemName);
+                }
+            } catch (RuntimeException e) {
+                if (PacketDecodeFailures.isUnsupportedItemComponentDecodeFailure(e)) return;
+                throw e;
             }
         }
+
+        Map<Integer, String> inv = inventoryCache.computeIfAbsent(playerUuid, k -> new ConcurrentHashMap<>());
+        inv.putAll(inventoryUpdates);
 
         // Re-emit self-equipment into the target's recording
         emitSelfEquipment(playerUuid);
@@ -1014,31 +1062,54 @@ public class PacketRecorder extends PacketListenerAbstract {
     // ==================== Inventory Cache (always-on) ====================
 
     private void cacheWindowItems(PacketSendEvent event, UUID viewerUuid) {
-        WrapperPlayServerWindowItems wrapper = new WrapperPlayServerWindowItems(event);
-        if (wrapper.getWindowId() != 0) return;
-        List<ItemStack> items = wrapper.getItems();
-        if (items == null) return;
-        Map<Integer, String> invCache = inventoryCache.computeIfAbsent(viewerUuid, k -> new ConcurrentHashMap<>());
-        Map<Integer, Integer> countCache = inventoryCountCache.computeIfAbsent(viewerUuid, k -> new ConcurrentHashMap<>());
-        Map<Integer, List<PlayerInventoryEvent.EnchantEntry>> enchCache = inventoryEnchantCache.computeIfAbsent(viewerUuid, k -> new ConcurrentHashMap<>());
-        for (int i = 0; i < items.size() && i < 46; i++) {
-            ItemStack item = items.get(i);
-            invCache.put(i, getItemName(item));
-            countCache.put(i, item != null ? item.getAmount() : 0);
-            enchCache.put(i, getEnchantments(item));
+        Map<Integer, String> inventoryUpdates = new HashMap<>();
+        Map<Integer, Integer> countUpdates = new HashMap<>();
+        Map<Integer, List<PlayerInventoryEvent.EnchantEntry>> enchantUpdates = new HashMap<>();
+
+        try {
+            WrapperPlayServerWindowItems wrapper = new WrapperPlayServerWindowItems(event);
+            if (wrapper.getWindowId() != 0) return;
+            List<ItemStack> items = wrapper.getItems();
+            if (items == null) return;
+            for (int i = 0; i < items.size() && i < 46; i++) {
+                ItemStack item = items.get(i);
+                inventoryUpdates.put(i, getItemName(item));
+                countUpdates.put(i, item != null ? item.getAmount() : 0);
+                enchantUpdates.put(i, getEnchantments(item));
+            }
+        } catch (RuntimeException e) {
+            if (PacketDecodeFailures.isUnsupportedItemComponentDecodeFailure(e)) return;
+            throw e;
         }
+
+        inventoryCache.computeIfAbsent(viewerUuid, k -> new ConcurrentHashMap<>()).putAll(inventoryUpdates);
+        inventoryCountCache.computeIfAbsent(viewerUuid, k -> new ConcurrentHashMap<>()).putAll(countUpdates);
+        inventoryEnchantCache.computeIfAbsent(viewerUuid, k -> new ConcurrentHashMap<>()).putAll(enchantUpdates);
     }
 
     private void cacheSetSlot(PacketSendEvent event, UUID viewerUuid) {
-        WrapperPlayServerSetSlot wrapper = new WrapperPlayServerSetSlot(event);
-        int windowId = wrapper.getWindowId();
-        if (windowId != 0 && windowId != -2) return;
-        int slotIndex = wrapper.getSlot();
-        ItemStack item = wrapper.getItem();
-        String itemName = getItemName(item);
+        int slotIndex;
+        String itemName;
+        int itemAmount;
+        List<PlayerInventoryEvent.EnchantEntry> enchants;
+
+        try {
+            WrapperPlayServerSetSlot wrapper = new WrapperPlayServerSetSlot(event);
+            int windowId = wrapper.getWindowId();
+            if (windowId != 0 && windowId != -2) return;
+            slotIndex = wrapper.getSlot();
+            ItemStack item = wrapper.getItem();
+            itemName = getItemName(item);
+            itemAmount = item != null ? item.getAmount() : 0;
+            enchants = getEnchantments(item);
+        } catch (RuntimeException e) {
+            if (PacketDecodeFailures.isUnsupportedItemComponentDecodeFailure(e)) return;
+            throw e;
+        }
+
         inventoryCache.computeIfAbsent(viewerUuid, k -> new ConcurrentHashMap<>()).put(slotIndex, itemName);
-        inventoryCountCache.computeIfAbsent(viewerUuid, k -> new ConcurrentHashMap<>()).put(slotIndex, item != null ? item.getAmount() : 0);
-        inventoryEnchantCache.computeIfAbsent(viewerUuid, k -> new ConcurrentHashMap<>()).put(slotIndex, getEnchantments(item));
+        inventoryCountCache.computeIfAbsent(viewerUuid, k -> new ConcurrentHashMap<>()).put(slotIndex, itemAmount);
+        inventoryEnchantCache.computeIfAbsent(viewerUuid, k -> new ConcurrentHashMap<>()).put(slotIndex, enchants);
     }
 
     private void cacheHeldItemChange(PacketSendEvent event, UUID viewerUuid) {
@@ -1049,29 +1120,34 @@ public class PacketRecorder extends PacketListenerAbstract {
     // ==================== Inventory Handlers ====================
 
     private void handleWindowItems(PacketSendEvent event, UUID viewerUuid) {
-        WrapperPlayServerWindowItems wrapper = new WrapperPlayServerWindowItems(event);
+        List<PlayerInventoryEvent.SlotEntry> slots = new ArrayList<>();
+        Map<Integer, String> inventoryUpdates = new HashMap<>();
 
-        if (wrapper.getWindowId() != 0) return; // Only player inventory
+        try {
+            WrapperPlayServerWindowItems wrapper = new WrapperPlayServerWindowItems(event);
+            if (wrapper.getWindowId() != 0) return; // Only player inventory
+            List<ItemStack> items = wrapper.getItems();
+            if (items == null) return;
 
-        List<ItemStack> items = wrapper.getItems();
-        if (items == null) return;
+            for (int i = 0; i < items.size() && i < 46; i++) {
+                ItemStack item = items.get(i);
+                String itemName = getItemName(item);
+                inventoryUpdates.put(i, itemName);
+                int viewerSlot = translateSlotIndex(i);
+                if (viewerSlot < 0) continue; // skip crafting slots
+                if (item != null && !item.isEmpty()) {
+                    slots.add(new PlayerInventoryEvent.SlotEntry(viewerSlot, itemName, item.getAmount(), getEnchantments(item)));
+                }
+            }
+        } catch (RuntimeException e) {
+            if (PacketDecodeFailures.isUnsupportedItemComponentDecodeFailure(e)) return;
+            throw e;
+        }
 
         long now = System.currentTimeMillis();
         int deltaMs = (int) (now - getRecordingStartTime(viewerUuid));
-
-        List<PlayerInventoryEvent.SlotEntry> slots = new ArrayList<>();
         Map<Integer, String> invCache = inventoryCache.computeIfAbsent(viewerUuid, k -> new ConcurrentHashMap<>());
-
-        for (int i = 0; i < items.size() && i < 46; i++) {
-            ItemStack item = items.get(i);
-            String itemName = getItemName(item);
-            invCache.put(i, itemName);
-            int viewerSlot = translateSlotIndex(i);
-            if (viewerSlot < 0) continue; // skip crafting slots
-            if (item != null && !item.isEmpty()) {
-                slots.add(new PlayerInventoryEvent.SlotEntry(viewerSlot, itemName, item.getAmount(), getEnchantments(item)));
-            }
-        }
+        invCache.putAll(inventoryUpdates);
 
         enqueue(viewerUuid, new PlayerInventoryEvent(deltaMs, viewerUuid, true, slots));
 
@@ -1080,34 +1156,45 @@ public class PacketRecorder extends PacketListenerAbstract {
     }
 
     private void handleSetSlot(PacketSendEvent event, UUID viewerUuid) {
-        WrapperPlayServerSetSlot wrapper = new WrapperPlayServerSetSlot(event);
+        String itemName;
+        int itemAmount = 0;
+        int slotIndex;
+        int viewerSlot;
+        List<PlayerInventoryEvent.EnchantEntry> enchants = Collections.emptyList();
 
-        int windowId = wrapper.getWindowId();
-        if (windowId != 0 && windowId != -2) return; // Only player inventory (0 = normal, -2 = direct)
+        try {
+            WrapperPlayServerSetSlot wrapper = new WrapperPlayServerSetSlot(event);
+            int windowId = wrapper.getWindowId();
+            if (windowId != 0 && windowId != -2) return; // Only player inventory (0 = normal, -2 = direct)
 
-        int slotIndex = wrapper.getSlot();
-        ItemStack item = wrapper.getItem();
+            slotIndex = wrapper.getSlot();
+            ItemStack item = wrapper.getItem();
+            viewerSlot = translateSlotIndex(slotIndex);
+
+            if (item != null && !item.isEmpty()) {
+                itemName = getItemName(item);
+                itemAmount = item.getAmount();
+                enchants = getEnchantments(item);
+            } else {
+                itemName = "air";
+            }
+        } catch (RuntimeException e) {
+            if (PacketDecodeFailures.isUnsupportedItemComponentDecodeFailure(e)) return;
+            throw e;
+        }
 
         long now = System.currentTimeMillis();
         int deltaMs = (int) (now - getRecordingStartTime(viewerUuid));
 
-        String itemName;
-        int viewerSlot = translateSlotIndex(slotIndex);
-
         // Update inventory cache (uses protocol slot indices)
-        if (item != null && !item.isEmpty()) {
-            itemName = getItemName(item);
-        } else {
-            itemName = "air";
-        }
         Map<Integer, String> invCache = inventoryCache.computeIfAbsent(viewerUuid, k -> new ConcurrentHashMap<>());
         invCache.put(slotIndex, itemName);
 
         // Emit inventory event with translated slot index
         if (viewerSlot >= 0) {
             List<PlayerInventoryEvent.SlotEntry> slots = new ArrayList<>();
-            if (item != null && !item.isEmpty()) {
-                slots.add(new PlayerInventoryEvent.SlotEntry(viewerSlot, itemName, item.getAmount(), getEnchantments(item)));
+            if (!itemName.equals("air")) {
+                slots.add(new PlayerInventoryEvent.SlotEntry(viewerSlot, itemName, itemAmount, enchants));
             } else {
                 slots.add(new PlayerInventoryEvent.SlotEntry(viewerSlot, "air", 0));
             }
@@ -1376,6 +1463,11 @@ public class PacketRecorder extends PacketListenerAbstract {
     }
 
     // ==================== Utilities ====================
+
+    private static UUID resolvePacketPlayerUuid(User user, Object player) {
+        UUID userUuid = user != null ? user.getUUID() : null;
+        return PacketPlayerUuidResolver.resolve(userUuid, player);
+    }
 
     private List<PlayerInventoryEvent.EnchantEntry> getEnchantments(ItemStack item) {
         if (item == null || item.isEmpty()) return Collections.emptyList();
