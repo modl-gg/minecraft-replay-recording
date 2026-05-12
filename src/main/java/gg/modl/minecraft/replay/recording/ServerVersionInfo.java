@@ -61,6 +61,8 @@ public final class ServerVersionInfo {
                 }
             }
         }
+        // Fallback is only used for an unparseable/unsupported configured server version.
+        // Packet paths should prefer the PacketEvents user/server version when available.
         return best != null ? best : ClientVersion.getLatest();
     }
 

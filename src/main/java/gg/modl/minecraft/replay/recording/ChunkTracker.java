@@ -8,7 +8,9 @@ import com.github.retrooper.packetevents.protocol.world.states.WrappedBlockState
 import gg.modl.minecraft.replay.util.BlockSnapshot;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -370,7 +372,7 @@ public class ChunkTracker {
 
     private final Map<Integer, Boolean> opaqueCache = new ConcurrentHashMap<>();
 
-    private static final Set<String> NON_OPAQUE_KEYWORDS = Collections.unmodifiableSet(new java.util.HashSet<>(java.util.Arrays.asList(
+    private static final Set<String> NON_OPAQUE_KEYWORDS = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
             "glass", "leaves", "water", "lava", "ice", "barrier",
             "slime_block", "honey_block", "tinted_glass",
             "slab", "stairs", "fence", "wall", "gate",

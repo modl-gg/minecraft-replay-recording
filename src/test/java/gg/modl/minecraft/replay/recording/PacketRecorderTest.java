@@ -9,10 +9,15 @@ import com.github.retrooper.packetevents.protocol.player.ClientVersion;
 import com.github.retrooper.packetevents.protocol.player.User;
 import com.github.retrooper.packetevents.wrapper.PacketWrapper;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.io.File;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.logging.Logger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -22,6 +27,9 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PacketRecorderTest {
+
+    @TempDir
+    File tempDir;
 
     @Test
     void recognizesUnknownItemRegistryDecodeFailure() {
@@ -173,6 +181,17 @@ class PacketRecorderTest {
         assertFalse(event.needsReEncode());
     }
 
+    @Test
+    void skinDownloadExecutorIsLifecycleOwned() {
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        RecordingManager manager = new RecordingManager(new TestRecordingConfig(), tempDir, Logger.getAnonymousLogger());
+        PacketRecorder recorder = new PacketRecorder(manager, new TestRecordingConfig(), Logger.getAnonymousLogger(), executor);
+
+        recorder.shutdownSkinDownloadExecutor();
+
+        assertTrue(executor.isShutdown());
+    }
+
     public static final class FabricStylePlayer {
         private final UUID uuid;
 
@@ -214,6 +233,48 @@ class PacketRecorderTest {
 
         @Override
         public void call(PacketListenerCommon listener) {
+        }
+    }
+
+    private static final class TestRecordingConfig implements RecordingConfig {
+        @Override
+        public int bufferDurationSeconds() {
+            return 30;
+        }
+
+        @Override
+        public int maxDurationSeconds() {
+            return 60;
+        }
+
+        @Override
+        public int radiusBlocks() {
+            return 16;
+        }
+
+        @Override
+        public int moveThrottleMs() {
+            return 50;
+        }
+
+        @Override
+        public String uploadEndpoint() {
+            return "https://example.com";
+        }
+
+        @Override
+        public String uploadApiKey() {
+            return "CHANGE_ME";
+        }
+
+        @Override
+        public String viewerBaseUrl() {
+            return "https://example.com/replay";
+        }
+
+        @Override
+        public String mcVersion() {
+            return "1.21.7";
         }
     }
 

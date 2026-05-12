@@ -1,7 +1,9 @@
 package gg.modl.minecraft.replay.recording;
 
 import gg.modl.minecraft.replay.ReplayWriter;
-import gg.modl.minecraft.replay.api.*;
+import gg.modl.minecraft.replay.api.CircularEventBuffer;
+import gg.modl.minecraft.replay.api.FileReplayOutput;
+import gg.modl.minecraft.replay.api.ReplayMetadata;
 import gg.modl.minecraft.replay.format.ReplayEvent;
 import gg.modl.minecraft.replay.format.ReplayHeader;
 import gg.modl.minecraft.replay.format.events.BlockChangeEvent;
@@ -12,9 +14,27 @@ import gg.modl.minecraft.replay.util.BlockSnapshot;
 import gg.modl.minecraft.replay.util.FormatConstants;
 import lombok.Getter;
 
-import java.io.*;
-import java.util.*;
-import java.util.concurrent.*;
+import java.io.File;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -44,7 +64,7 @@ public class RecordingManager {
 
         int writerThreads = Math.max(2, Math.min(4, Runtime.getRuntime().availableProcessors() / 2));
         this.writerExecutor = Executors.newFixedThreadPool(writerThreads, new ThreadFactory() {
-            private final java.util.concurrent.atomic.AtomicInteger counter = new java.util.concurrent.atomic.AtomicInteger(1);
+            private final AtomicInteger counter = new AtomicInteger(1);
             @Override
             public Thread newThread(Runnable r) {
                 Thread t = new Thread(r, "ReplayRecording-Writer-" + counter.getAndIncrement());

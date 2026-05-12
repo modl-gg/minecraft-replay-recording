@@ -17,6 +17,7 @@ import com.github.retrooper.packetevents.protocol.player.InteractionHand;
 import com.github.retrooper.packetevents.protocol.player.TextureProperty;
 import com.github.retrooper.packetevents.protocol.player.User;
 import com.github.retrooper.packetevents.protocol.player.UserProfile;
+import com.github.retrooper.packetevents.protocol.world.chunk.BaseChunk;
 import com.github.retrooper.packetevents.protocol.world.chunk.Column;
 import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientAnimation;
 import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientHeldItemChange;
@@ -25,22 +26,69 @@ import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientPl
 import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientPlayerPositionAndRotation;
 import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientPlayerRotation;
 import com.github.retrooper.packetevents.protocol.item.enchantment.Enchantment;
-import com.github.retrooper.packetevents.wrapper.play.server.*;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerBlockChange;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerChunkData;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerChunkDataBulk;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerCollectItem;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerDestroyEntities;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityAnimation;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityEffect;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityEquipment;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityMetadata;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityRelativeMove;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityRelativeMoveAndRotation;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityTeleport;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerHeldItemChange;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerHurtAnimation;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerJoinGame;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerMultiBlockChange;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerPlayerInfoUpdate;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerRespawn;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSetSlot;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSpawnEntity;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSystemChatMessage;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerUnloadChunk;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerUpdateHealth;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerWindowItems;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import gg.modl.minecraft.replay.format.events.*;
 import gg.modl.minecraft.replay.format.ReplayEvent;
+import gg.modl.minecraft.replay.format.events.BlockChangeEvent;
+import gg.modl.minecraft.replay.format.events.ChatEvent;
+import gg.modl.minecraft.replay.format.events.EntityMoveEvent;
+import gg.modl.minecraft.replay.format.events.EntityRemoveEvent;
+import gg.modl.minecraft.replay.format.events.EntitySpawnEvent;
+import gg.modl.minecraft.replay.format.events.PlayerAnimEvent;
+import gg.modl.minecraft.replay.format.events.PlayerEffectsEvent;
+import gg.modl.minecraft.replay.format.events.PlayerEquipmentFullEvent;
+import gg.modl.minecraft.replay.format.events.PlayerHealthEvent;
+import gg.modl.minecraft.replay.format.events.PlayerInventoryEvent;
+import gg.modl.minecraft.replay.format.events.PlayerMoveEvent;
+import gg.modl.minecraft.replay.format.events.PlayerRemoveEvent;
+import gg.modl.minecraft.replay.format.events.PlayerSkinEvent;
+import gg.modl.minecraft.replay.format.events.PlayerSpawnEvent;
 
 
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 import java.net.URI;
-import java.io.*;
 import java.net.HttpURLConnection;
 import java.nio.charset.StandardCharsets;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Logger;
 
 /**
@@ -57,6 +105,8 @@ public class PacketRecorder extends PacketListenerAbstract {
     private final Logger logger;
     private final EntityTracker entityTracker;
     private final ChunkTracker chunkTracker;
+    private final ClientVersion configuredClientVersion;
+    private final ExecutorService skinDownloadExecutor;
 
     // Per-player last move timestamp for throttling (entity moves)
     private final Map<UUID, Map<Integer, Long>> lastMoveTimestamps = new ConcurrentHashMap<>();
@@ -88,38 +138,22 @@ public class PacketRecorder extends PacketListenerAbstract {
     // Per-player inventory enchantment cache: slot index -> list of enchantments
     private final Map<UUID, Map<Integer, List<PlayerInventoryEvent.EnchantEntry>>> inventoryEnchantCache = new ConcurrentHashMap<>();
 
-    // Entity types that bypass movement throttle (projectiles, items)
-    private static final Set<Integer> NO_THROTTLE_TYPE_IDS = new HashSet<>();
-    static {
-        ClientVersion v = ClientVersion.getLatest();
-        NO_THROTTLE_TYPE_IDS.add(EntityTypes.ENDER_PEARL.getId(v));
-        NO_THROTTLE_TYPE_IDS.add(EntityTypes.ARROW.getId(v));
-        NO_THROTTLE_TYPE_IDS.add(EntityTypes.SPECTRAL_ARROW.getId(v));
-        NO_THROTTLE_TYPE_IDS.add(EntityTypes.SNOWBALL.getId(v));
-        NO_THROTTLE_TYPE_IDS.add(EntityTypes.TRIDENT.getId(v));
-        NO_THROTTLE_TYPE_IDS.add(EntityTypes.ITEM.getId(v));
-        NO_THROTTLE_TYPE_IDS.add(EntityTypes.EGG.getId(v));
-        NO_THROTTLE_TYPE_IDS.add(EntityTypes.FIREBALL.getId(v));
-        NO_THROTTLE_TYPE_IDS.add(EntityTypes.SMALL_FIREBALL.getId(v));
-        NO_THROTTLE_TYPE_IDS.add(EntityTypes.EXPERIENCE_BOTTLE.getId(v));
-        NO_THROTTLE_TYPE_IDS.add(EntityTypes.POTION.getId(v));
-    }
-
     private static final int SKIN_TIMEOUT_MS = 5000;
 
-    private static final ExecutorService skinDownloadExecutor = Executors.newFixedThreadPool(4, r -> {
-        Thread t = new Thread(r, "ReplaySkinDownload");
-        t.setDaemon(true);
-        return t;
-    });
-
     public PacketRecorder(RecordingManager recordingManager, RecordingConfig config, Logger logger) {
+        this(recordingManager, config, logger, createSkinDownloadExecutor());
+    }
+
+    PacketRecorder(RecordingManager recordingManager, RecordingConfig config, Logger logger,
+                   ExecutorService skinDownloadExecutor) {
         super(PacketListenerPriority.MONITOR);
         this.recordingManager = recordingManager;
         this.config = config;
         this.logger = logger;
         this.entityTracker = new EntityTracker();
         this.chunkTracker = new ChunkTracker(config.mcVersion());
+        this.configuredClientVersion = new ServerVersionInfo(config.mcVersion()).toClientVersion();
+        this.skinDownloadExecutor = skinDownloadExecutor;
         recordingManager.setTrackers(chunkTracker, entityTracker);
     }
 
@@ -147,18 +181,44 @@ public class PacketRecorder extends PacketListenerAbstract {
     }
 
     public void unregister() {
-        PacketEvents.getAPI().getEventManager().unregisterListener(this);
-        entityTracker.clear();
-        chunkTracker.clearAll();
-        lastMoveTimestamps.clear();
-        sneakStates.clear();
-        lastHealthValues.clear();
-        heldSlots.clear();
-        inventoryCache.clear();
-        inventoryCountCache.clear();
-        inventoryEnchantCache.clear();
-        skinRecorded.clear();
-        otherPlayerEquipment.clear();
+        try {
+            PacketEvents.getAPI().getEventManager().unregisterListener(this);
+        } finally {
+            shutdownSkinDownloadExecutor();
+            entityTracker.clear();
+            chunkTracker.clearAll();
+            lastMoveTimestamps.clear();
+            sneakStates.clear();
+            lastHealthValues.clear();
+            heldSlots.clear();
+            inventoryCache.clear();
+            inventoryCountCache.clear();
+            inventoryEnchantCache.clear();
+            skinRecorded.clear();
+            otherPlayerEquipment.clear();
+        }
+    }
+
+    void shutdownSkinDownloadExecutor() {
+        skinDownloadExecutor.shutdown();
+        try {
+            if (!skinDownloadExecutor.awaitTermination(SKIN_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+                skinDownloadExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            skinDownloadExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private static ExecutorService createSkinDownloadExecutor() {
+        AtomicInteger counter = new AtomicInteger(1);
+        ThreadFactory threadFactory = r -> {
+            Thread t = new Thread(r, "ReplaySkinDownload-" + counter.getAndIncrement());
+            t.setDaemon(true);
+            return t;
+        };
+        return Executors.newFixedThreadPool(4, threadFactory);
     }
 
     @Override
@@ -341,7 +401,7 @@ public class PacketRecorder extends PacketListenerAbstract {
             WrapperPlayServerChunkDataBulk wrapper = new WrapperPlayServerChunkDataBulk(event);
             int[] xs = wrapper.getX();
             int[] zs = wrapper.getZ();
-            com.github.retrooper.packetevents.protocol.world.chunk.BaseChunk[][] allChunks = wrapper.getChunks();
+            BaseChunk[][] allChunks = wrapper.getChunks();
             for (int i = 0; i < xs.length; i++) {
                 Column column = new Column(xs[i], zs[i], true, allChunks[i], null);
                 chunkTracker.handleChunkData(viewerUuid, xs[i], zs[i], column);
@@ -512,12 +572,14 @@ public class PacketRecorder extends PacketListenerAbstract {
                 wrapper.getPosition().getZ(),
                 wrapper.getYaw(),
                 wrapper.getPitch(),
-                wrapper.getData()
+                wrapper.getData(),
+                eventClientVersion(event)
         );
     }
 
     private void handleSpawnEntity(UUID viewerUuid, int entityId, UUID entityUuid, EntityType entityType,
-                                   double x, double y, double z, float yaw, float pitch, int data) {
+                                   double x, double y, double z, float yaw, float pitch, int data,
+                                   ClientVersion version) {
         SpawnEntityClassifier.SpawnKind spawnKind =
                 SpawnEntityClassifier.classify(entityTracker.isKnownPlayer(entityUuid), entityType);
 
@@ -549,8 +611,9 @@ public class PacketRecorder extends PacketListenerAbstract {
                 logger.warning("Unresolved entity type for NON_PLAYER! entityId=" + entityId + ", entityUuid=" + entityUuid);
                 return; 
             }
-            int typeId = entityType.getId(ClientVersion.getLatest());
-            entityTracker.trackEntity(viewerUuid, entityId, entityUuid, false, typeId, x, y, z, yaw, pitch);
+            int typeId = entityType.getId(version);
+            boolean noThrottleMovement = isNoThrottleType(entityType, version);
+            entityTracker.trackEntity(viewerUuid, entityId, entityUuid, false, typeId, noThrottleMovement, x, y, z, yaw, pitch);
 
             if (recordingManager.isRecording(viewerUuid)) {
                 long now = System.currentTimeMillis();
@@ -562,7 +625,7 @@ public class PacketRecorder extends PacketListenerAbstract {
                     int blockStateId = data;
                     typeName = typeName + ":" + blockStateId;
                 }
-                byte[] metadata = typeName.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                byte[] metadata = typeName.getBytes(StandardCharsets.UTF_8);
                 EntitySpawnEvent spawnEvent = new EntitySpawnEvent(
                         (int) (now - getRecordingStartTime(viewerUuid)),
                         entityId, (short) typeId, (float) x, (float) y, (float) z, metadata
@@ -710,7 +773,7 @@ public class PacketRecorder extends PacketListenerAbstract {
 
         // Throttle movement events (skip throttle for players and fast-moving entities like projectiles/items)
         long now = System.currentTimeMillis();
-        if (!entity.isPlayer() && !NO_THROTTLE_TYPE_IDS.contains(entity.getEntityTypeId())) {
+        if (!entity.isPlayer() && !entity.isNoThrottleMovement()) {
             int throttleMs = config.moveThrottleMs();
             Map<Integer, Long> timestamps = lastMoveTimestamps.computeIfAbsent(viewerUuid, k -> new ConcurrentHashMap<>());
             Long lastMove = timestamps.get(entityId);
@@ -860,7 +923,7 @@ public class PacketRecorder extends PacketListenerAbstract {
         } else if (recordingManager.isRecording(viewerUuid)) {
             // For item entities, metadata index 8 contains the ItemStack.
             // Re-emit a spawn event with "item:<itemname>" so the viewer can texture it.
-            int itemTypeId = EntityTypes.ITEM.getId(ClientVersion.getLatest());
+            int itemTypeId = EntityTypes.ITEM.getId(eventClientVersion(event));
             if (entity.getTypeId() == itemTypeId) {
                 for (EntityData<?> data : metadata) {
                     if (data.getIndex() == 8 && data.getValue() instanceof ItemStack) {
@@ -916,7 +979,7 @@ public class PacketRecorder extends PacketListenerAbstract {
                 int slotId = mapEquipmentSlot(equipment.getSlot());
                 String itemName = getItemName(equipment.getItem());
                 equipmentUpdates.put(slotId, itemName);
-                List<PlayerInventoryEvent.EnchantEntry> invEnchants = getEnchantments(equipment.getItem());
+                List<PlayerInventoryEvent.EnchantEntry> invEnchants = getEnchantments(equipment.getItem(), eventClientVersion(event));
                 enchantCache.put(slotId, toEquipEnchants(invEnchants));
             }
         } catch (RuntimeException e) {
@@ -1075,7 +1138,7 @@ public class PacketRecorder extends PacketListenerAbstract {
                 ItemStack item = items.get(i);
                 inventoryUpdates.put(i, getItemName(item));
                 countUpdates.put(i, item != null ? item.getAmount() : 0);
-                enchantUpdates.put(i, getEnchantments(item));
+                enchantUpdates.put(i, getEnchantments(item, eventClientVersion(event)));
             }
         } catch (RuntimeException e) {
             if (PacketDecodeFailures.isUnsupportedItemComponentDecodeFailure(e)) return;
@@ -1101,7 +1164,7 @@ public class PacketRecorder extends PacketListenerAbstract {
             ItemStack item = wrapper.getItem();
             itemName = getItemName(item);
             itemAmount = item != null ? item.getAmount() : 0;
-            enchants = getEnchantments(item);
+            enchants = getEnchantments(item, eventClientVersion(event));
         } catch (RuntimeException e) {
             if (PacketDecodeFailures.isUnsupportedItemComponentDecodeFailure(e)) return;
             throw e;
@@ -1136,7 +1199,7 @@ public class PacketRecorder extends PacketListenerAbstract {
                 int viewerSlot = translateSlotIndex(i);
                 if (viewerSlot < 0) continue; // skip crafting slots
                 if (item != null && !item.isEmpty()) {
-                    slots.add(new PlayerInventoryEvent.SlotEntry(viewerSlot, itemName, item.getAmount(), getEnchantments(item)));
+                    slots.add(new PlayerInventoryEvent.SlotEntry(viewerSlot, itemName, item.getAmount(), getEnchantments(item, eventClientVersion(event))));
                 }
             }
         } catch (RuntimeException e) {
@@ -1174,7 +1237,7 @@ public class PacketRecorder extends PacketListenerAbstract {
             if (item != null && !item.isEmpty()) {
                 itemName = getItemName(item);
                 itemAmount = item.getAmount();
-                enchants = getEnchantments(item);
+                enchants = getEnchantments(item, eventClientVersion(event));
             } else {
                 itemName = "air";
             }
@@ -1235,14 +1298,34 @@ public class PacketRecorder extends PacketListenerAbstract {
         int deltaMs = (int) (now - getRecordingStartTime(viewerUuid));
         Map<Integer, List<PlayerInventoryEvent.EnchantEntry>> enchCache = inventoryEnchantCache.getOrDefault(viewerUuid, Collections.emptyMap());
 
-        List<PlayerEquipmentFullEvent.SlotEntry> slots = new ArrayList<>();
-        slots.add(new PlayerEquipmentFullEvent.SlotEntry(0, inv.getOrDefault(36 + held, "air"), toEquipEnchants(enchCache.get(36 + held))));  // main hand
-        slots.add(new PlayerEquipmentFullEvent.SlotEntry(1, inv.getOrDefault(45, "air"), toEquipEnchants(enchCache.get(45))));         // off hand
-        slots.add(new PlayerEquipmentFullEvent.SlotEntry(2, inv.getOrDefault(5, "air"), toEquipEnchants(enchCache.get(5))));          // helmet (HEAD)
-        slots.add(new PlayerEquipmentFullEvent.SlotEntry(3, inv.getOrDefault(6, "air"), toEquipEnchants(enchCache.get(6))));          // chestplate (CHEST)
-        slots.add(new PlayerEquipmentFullEvent.SlotEntry(4, inv.getOrDefault(7, "air"), toEquipEnchants(enchCache.get(7))));          // leggings (LEGS)
-        slots.add(new PlayerEquipmentFullEvent.SlotEntry(5, inv.getOrDefault(8, "air"), toEquipEnchants(enchCache.get(8))));          // boots (FEET)
+        List<PlayerEquipmentFullEvent.SlotEntry> slots = buildEquipmentSlots(inv, enchCache, held);
         enqueue(viewerUuid, new PlayerEquipmentFullEvent(deltaMs, viewerUuid, slots));
+    }
+
+    private List<PlayerEquipmentFullEvent.SlotEntry> buildEquipmentSlots(
+            Map<Integer, String> inv,
+            Map<Integer, List<PlayerInventoryEvent.EnchantEntry>> enchCache,
+            int held) {
+        List<PlayerEquipmentFullEvent.SlotEntry> slots = new ArrayList<>();
+        slots.add(equipmentSlot(0, 36 + held, inv, enchCache)); // main hand
+        slots.add(equipmentSlot(1, 45, inv, enchCache));        // off hand
+        slots.add(equipmentSlot(2, 5, inv, enchCache));         // helmet (HEAD)
+        slots.add(equipmentSlot(3, 6, inv, enchCache));         // chestplate (CHEST)
+        slots.add(equipmentSlot(4, 7, inv, enchCache));         // leggings (LEGS)
+        slots.add(equipmentSlot(5, 8, inv, enchCache));         // boots (FEET)
+        return slots;
+    }
+
+    private PlayerEquipmentFullEvent.SlotEntry equipmentSlot(
+            int replaySlot,
+            int protocolSlot,
+            Map<Integer, String> inv,
+            Map<Integer, List<PlayerInventoryEvent.EnchantEntry>> enchCache) {
+        return new PlayerEquipmentFullEvent.SlotEntry(
+                replaySlot,
+                inv.getOrDefault(protocolSlot, "air"),
+                toEquipEnchants(enchCache.get(protocolSlot))
+        );
     }
 
     private List<PlayerEquipmentFullEvent.EnchantEntry> toEquipEnchants(List<PlayerInventoryEvent.EnchantEntry> invEnchants) {
@@ -1315,7 +1398,7 @@ public class PacketRecorder extends PacketListenerAbstract {
         EntityTracker.TrackedEntity entity = entityTracker.getByEntityId(viewerUuid, entityId);
         if (entity == null || !entity.isPlayer()) return;
 
-        int effectTypeId = wrapper.getPotionType().getId(ClientVersion.getLatest());
+        int effectTypeId = wrapper.getPotionType().getId(eventClientVersion(event));
         int amplifier = wrapper.getEffectAmplifier();
         int durationTicks = wrapper.getEffectDurationTicks();
 
@@ -1398,13 +1481,7 @@ public class PacketRecorder extends PacketListenerAbstract {
         int held = heldSlots.getOrDefault(viewerUuid, 0);
         Map<Integer, List<PlayerInventoryEvent.EnchantEntry>> enchCache = inventoryEnchantCache.getOrDefault(viewerUuid, Collections.emptyMap());
 
-        List<PlayerEquipmentFullEvent.SlotEntry> slots = new ArrayList<>();
-        slots.add(new PlayerEquipmentFullEvent.SlotEntry(0, inv.getOrDefault(36 + held, "air"), toEquipEnchants(enchCache.get(36 + held))));  // main hand
-        slots.add(new PlayerEquipmentFullEvent.SlotEntry(1, inv.getOrDefault(45, "air"), toEquipEnchants(enchCache.get(45))));         // off hand
-        slots.add(new PlayerEquipmentFullEvent.SlotEntry(2, inv.getOrDefault(5, "air"), toEquipEnchants(enchCache.get(5))));          // helmet (HEAD)
-        slots.add(new PlayerEquipmentFullEvent.SlotEntry(3, inv.getOrDefault(6, "air"), toEquipEnchants(enchCache.get(6))));          // chestplate (CHEST)
-        slots.add(new PlayerEquipmentFullEvent.SlotEntry(4, inv.getOrDefault(7, "air"), toEquipEnchants(enchCache.get(7))));          // leggings (LEGS)
-        slots.add(new PlayerEquipmentFullEvent.SlotEntry(5, inv.getOrDefault(8, "air"), toEquipEnchants(enchCache.get(8))));          // boots (FEET)
+        List<PlayerEquipmentFullEvent.SlotEntry> slots = buildEquipmentSlots(inv, enchCache, held);
         return new PlayerEquipmentFullEvent(0, viewerUuid, slots);
     }
 
@@ -1469,10 +1546,42 @@ public class PacketRecorder extends PacketListenerAbstract {
         return PacketPlayerUuidResolver.resolve(userUuid, player);
     }
 
-    private List<PlayerInventoryEvent.EnchantEntry> getEnchantments(ItemStack item) {
+    private ClientVersion eventClientVersion(PacketSendEvent event) {
+        User user = event.getUser();
+        if (user != null && user.getClientVersion() != null) {
+            return user.getClientVersion();
+        }
+        if (event.getServerVersion() != null) {
+            return event.getServerVersion().toClientVersion();
+        }
+        return configuredClientVersion;
+    }
+
+    static boolean isNoThrottleType(EntityType entityType, ClientVersion version) {
+        if (entityType == null) {
+            return false;
+        }
+        return isNoThrottleTypeId(entityType.getId(version), version);
+    }
+
+    private static boolean isNoThrottleTypeId(int entityTypeId, ClientVersion version) {
+        return entityTypeId == EntityTypes.ENDER_PEARL.getId(version)
+                || entityTypeId == EntityTypes.ARROW.getId(version)
+                || entityTypeId == EntityTypes.SPECTRAL_ARROW.getId(version)
+                || entityTypeId == EntityTypes.SNOWBALL.getId(version)
+                || entityTypeId == EntityTypes.TRIDENT.getId(version)
+                || entityTypeId == EntityTypes.ITEM.getId(version)
+                || entityTypeId == EntityTypes.EGG.getId(version)
+                || entityTypeId == EntityTypes.FIREBALL.getId(version)
+                || entityTypeId == EntityTypes.SMALL_FIREBALL.getId(version)
+                || entityTypeId == EntityTypes.EXPERIENCE_BOTTLE.getId(version)
+                || entityTypeId == EntityTypes.POTION.getId(version);
+    }
+
+    private List<PlayerInventoryEvent.EnchantEntry> getEnchantments(ItemStack item, ClientVersion version) {
         if (item == null || item.isEmpty()) return Collections.emptyList();
         try {
-            List<Enchantment> enchants = item.getEnchantments(ClientVersion.getLatest());
+            List<Enchantment> enchants = item.getEnchantments(version);
             if (enchants == null || enchants.isEmpty()) return Collections.emptyList();
             List<PlayerInventoryEvent.EnchantEntry> result = new ArrayList<>();
             for (Enchantment ench : enchants) {

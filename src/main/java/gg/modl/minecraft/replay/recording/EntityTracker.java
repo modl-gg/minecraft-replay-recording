@@ -26,7 +26,12 @@ public class EntityTracker {
 
     public void trackEntity(UUID viewerUuid, int entityId, UUID uuid, boolean isPlayer, int entityTypeId,
                             double x, double y, double z, float yaw, float pitch) {
-        TrackedEntity entity = new TrackedEntity(entityId, uuid, isPlayer, entityTypeId, x, y, z, yaw, pitch);
+        trackEntity(viewerUuid, entityId, uuid, isPlayer, entityTypeId, false, x, y, z, yaw, pitch);
+    }
+
+    public void trackEntity(UUID viewerUuid, int entityId, UUID uuid, boolean isPlayer, int entityTypeId,
+                            boolean noThrottleMovement, double x, double y, double z, float yaw, float pitch) {
+        TrackedEntity entity = new TrackedEntity(entityId, uuid, isPlayer, entityTypeId, noThrottleMovement, x, y, z, yaw, pitch);
         perPlayerById.computeIfAbsent(viewerUuid, k -> new ConcurrentHashMap<>()).put(entityId, entity);
         if (uuid != null) {
             perPlayerByUuid.computeIfAbsent(viewerUuid, k -> new ConcurrentHashMap<>()).put(uuid, entity);
@@ -35,7 +40,7 @@ public class EntityTracker {
 
     public void trackPlayer(UUID viewerUuid, int entityId, UUID uuid, String playerName,
                             double x, double y, double z, float yaw, float pitch) {
-        TrackedEntity entity = new TrackedEntity(entityId, uuid, true, -1, x, y, z, yaw, pitch);
+        TrackedEntity entity = new TrackedEntity(entityId, uuid, true, -1, true, x, y, z, yaw, pitch);
         entity.setPlayerName(playerName);
         perPlayerById.computeIfAbsent(viewerUuid, k -> new ConcurrentHashMap<>()).put(entityId, entity);
         perPlayerByUuid.computeIfAbsent(viewerUuid, k -> new ConcurrentHashMap<>()).put(uuid, entity);
@@ -122,7 +127,7 @@ public class EntityTracker {
 
         // Create new TrackedEntity with the real entityId, preserving all other fields
         TrackedEntity updated = new TrackedEntity(newEntityId, existing.getUuid(), existing.isPlayer(),
-                existing.getEntityTypeId(), existing.getX(), existing.getY(), existing.getZ(),
+                existing.getEntityTypeId(), existing.isNoThrottleMovement(), existing.getX(), existing.getY(), existing.getZ(),
                 existing.getYaw(), existing.getPitch());
         updated.setPlayerName(existing.getPlayerName());
 
@@ -211,16 +216,23 @@ public class EntityTracker {
         private final UUID uuid;
         private final boolean player;
         private final int entityTypeId;
+        private final boolean noThrottleMovement;
         private volatile double x, y, z;
         private volatile float yaw, pitch;
         private volatile String playerName;
 
         public TrackedEntity(int entityId, UUID uuid, boolean player, int entityTypeId,
                              double x, double y, double z, float yaw, float pitch) {
+            this(entityId, uuid, player, entityTypeId, false, x, y, z, yaw, pitch);
+        }
+
+        public TrackedEntity(int entityId, UUID uuid, boolean player, int entityTypeId, boolean noThrottleMovement,
+                             double x, double y, double z, float yaw, float pitch) {
             this.entityId = entityId;
             this.uuid = uuid;
             this.player = player;
             this.entityTypeId = entityTypeId;
+            this.noThrottleMovement = noThrottleMovement;
             this.x = x;
             this.y = y;
             this.z = z;
