@@ -6,7 +6,7 @@ plugins {
 val packetEventsVersion = "2.12.10"
 
 group = "gg.modl.minecraft.replay"
-version = "1.1.6"
+version = "1.1.7"
 
 java {
     toolchain {

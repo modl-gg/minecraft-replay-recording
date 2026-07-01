@@ -279,6 +279,10 @@ public class RecordingManager {
         return future;
     }
 
+    public boolean discardRecording(UUID targetUuid) {
+        return recordings.remove(targetUuid) != null;
+    }
+
     public void stopAll() {
         for (UUID uuid : new ArrayList<>(recordings.keySet())) {
             stopRecording(uuid);
