@@ -562,6 +562,12 @@ public class PacketRecorder extends PacketListenerAbstract {
     private void handleSpawnEntity(PacketSendEvent event, UUID viewerUuid) {
         WrapperPlayServerSpawnEntity wrapper = new WrapperPlayServerSpawnEntity(event);
 
+        if (wrapper.getEntityType() == null) {
+            logger.warning("Aborting handleSpawnEntity: EntityType is null for ID " + wrapper.getEntityId() 
+                           + " (UUID: " + wrapper.getUUID().orElse(null) + ")");
+            return; 
+        }
+        
         handleSpawnEntity(
                 viewerUuid,
                 wrapper.getEntityId(),
